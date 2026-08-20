@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, PointerEvent, WheelEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, PointerEvent, WheelEvent, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { boardFootprint, zoomForBoardFootprint } from "./board-layout";
 
 type Coordinate = { lat: number; lon: number };
 
@@ -64,7 +65,6 @@ type NavigatorTile = {
   top: number;
 };
 
-type SheetLayout = "1 × 1" | "2 × 1" | "2 × 2" | "3 × 2";
 type MapTreatment = "Classic" | "Muted" | "Contrast";
 type RenderLayer =
   | "topography"
@@ -95,13 +95,6 @@ const TILE_SIZE = 256;
 const HEX_METERS = 100;
 const DEFAULT_CENTER = { lat: 50.5558, lon: 9.6808 };
 const DEFAULT_LABEL = "Fulda Gap, Hesse, Germany";
-const LAYOUT_DIMENSIONS: Record<SheetLayout, [number, number]> = {
-  "1 × 1": [1, 1],
-  "2 × 1": [2, 1],
-  "2 × 2": [2, 2],
-  "3 × 2": [3, 2],
-};
-
 const LAYERS: Array<{ id: RenderLayer; label: string; kinds: TerrainKind[] }> = [
   { id: "topography", label: "Topography", kinds: [] },
   { id: "water", label: "Water", kinds: ["water"] },
@@ -320,7 +313,8 @@ export default function Home() {
   const [zoom, setZoom] = useState(15);
   const [mapRotation, setMapRotation] = useState(0);
   const [rotation, setRotation] = useState(0);
-  const [layout, setLayout] = useState<SheetLayout>("2 × 1");
+  const [boardCols, setBoardCols] = useState(1);
+  const [boardRows, setBoardRows] = useState(1);
   const [treatment, setTreatment] = useState<MapTreatment>("Classic");
   const [layers, setLayers] = useState<Record<RenderLayer, boolean>>({ ...TOPOGRAPHY_ONLY });
   const [showLabels, setShowLabels] = useState(false);
@@ -334,7 +328,13 @@ export default function Home() {
   const [terrainError, setTerrainError] = useState("");
 
   const scale = useMemo(() => metersPerPixel(center.lat, zoom), [center.lat, zoom]);
-  const [sheetColumns, sheetRows] = LAYOUT_DIMENSIONS[layout];
+  const footprint = useMemo(() => boardFootprint(boardCols, boardRows), [boardCols, boardRows]);
+  const nextOutputZoom = useMemo(
+    () => zoomForBoardFootprint(navCenter.lat, footprint.widthMeters, footprint.heightMeters),
+    [footprint.heightMeters, footprint.widthMeters, navCenter.lat],
+  );
+  const sheetColumns = footprint.boardCols;
+  const sheetRows = footprint.boardRows;
   const elevationValues = useMemo(
     () => terrainData?.elevation?.points.map((point) => point.elevation).filter((value): value is number => value !== null) ?? [],
     [terrainData],
@@ -387,15 +387,21 @@ export default function Home() {
     return tiles;
   }, [navCenter, navigatorSize, navZoom]);
 
-  const selectionSize = useMemo(
-    () =>
-      clamp(
-        6000 / metersPerPixel(navCenter.lat, navZoom),
-        34,
-        Math.max(34, Math.min(navigatorSize.width, navigatorSize.height) * 0.72),
-      ),
-    [navCenter.lat, navigatorSize, navZoom],
-  );
+  const selectionFootprint = useMemo(() => {
+    const pixelScale = metersPerPixel(navCenter.lat, navZoom);
+    const rawWidth = footprint.widthMeters / pixelScale;
+    const rawHeight = footprint.heightMeters / pixelScale;
+    const maximumWidth = Math.max(40, navigatorSize.width * 0.72);
+    const maximumHeight = Math.max(40, navigatorSize.height * 0.72);
+    const fitScale = Math.min(maximumWidth / rawWidth, maximumHeight / rawHeight);
+    const minimumLongEdge = 58 * Math.max(footprint.boardCols, footprint.boardRows);
+    const readableScale = Math.max(1, minimumLongEdge / Math.max(rawWidth, rawHeight));
+    const displayScale = Math.min(fitScale, readableScale);
+    return {
+      width: Math.max(34, rawWidth * displayScale),
+      height: Math.max(34, rawHeight * displayScale),
+    };
+  }, [footprint, navCenter.lat, navigatorSize, navZoom]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -837,27 +843,43 @@ export default function Home() {
     const frameY = frameMargin;
     const frameWidth = width - frameMargin * 2;
     const frameHeight = height - frameMargin * 2;
+    context.strokeStyle = "#344032";
+    context.lineWidth = 2;
+    context.strokeRect(frameX, frameY, frameWidth, frameHeight);
+    context.lineWidth = 1;
+    context.setLineDash([7, 5]);
+    for (let column = 1; column < sheetColumns; column += 1) {
+      const x = frameX + (frameWidth * column) / sheetColumns;
+      context.beginPath();
+      context.moveTo(x, frameY);
+      context.lineTo(x, frameY + frameHeight);
+      context.stroke();
+    }
+    for (let row = 1; row < sheetRows; row += 1) {
+      const y = frameY + (frameHeight * row) / sheetRows;
+      context.beginPath();
+      context.moveTo(frameX, y);
+      context.lineTo(frameX + frameWidth, y);
+      context.stroke();
+    }
+    context.setLineDash([]);
+    if (sheetColumns * sheetRows > 1) {
+      context.font = "700 9px ui-monospace, monospace";
+      context.textAlign = "left";
+      for (let row = 0; row < sheetRows; row += 1) {
+        for (let column = 0; column < sheetColumns; column += 1) {
+          const label = `BOARD ${row + 1}-${column + 1}`;
+          const x = frameX + (frameWidth * column) / sheetColumns + 10;
+          const y = frameY + (frameHeight * (row + 1)) / sheetRows - 10;
+          const labelWidth = context.measureText(label).width;
+          context.fillStyle = "rgba(244,240,204,.88)";
+          context.fillRect(x - 4, y - 13, labelWidth + 8, 17);
+          context.fillStyle = "#334031";
+          context.fillText(label, x, y);
+        }
+      }
+    }
     if (showLabels) {
-      context.strokeStyle = "#344032";
-      context.lineWidth = 2;
-      context.strokeRect(frameX, frameY, frameWidth, frameHeight);
-      context.lineWidth = 1;
-      context.setLineDash([7, 5]);
-      for (let column = 1; column < sheetColumns; column += 1) {
-        const x = frameX + (frameWidth * column) / sheetColumns;
-        context.beginPath();
-        context.moveTo(x, frameY);
-        context.lineTo(x, frameY + frameHeight);
-        context.stroke();
-      }
-      for (let row = 1; row < sheetRows; row += 1) {
-        const y = frameY + (frameHeight * row) / sheetRows;
-        context.beginPath();
-        context.moveTo(frameX, y);
-        context.lineTo(frameX + frameWidth, y);
-        context.stroke();
-      }
-      context.setLineDash([]);
       context.fillStyle = "rgba(244, 240, 204, .92)";
       context.fillRect(frameX + 10, frameY + 10, Math.min(frameWidth - 20, 395), 56);
       context.fillStyle = "#334031";
@@ -1014,11 +1036,8 @@ export default function Home() {
   }
 
   function generateSelectedMap() {
-    const outputZoom = clamp(navZoom, 15, 17);
-    const outputScale = metersPerPixel(navCenter.lat, outputZoom);
-    const span = Math.round(
-      clamp(Math.hypot(navigatorSize.width, navigatorSize.height) * outputScale * 1.35, 1200, 6000),
-    );
+    const outputZoom = zoomForBoardFootprint(navCenter.lat, footprint.widthMeters, footprint.heightMeters);
+    const span = footprint.requestSpanMeters;
     const request: GenerationRequest = {
       id: Date.now(),
       center: navCenter,
@@ -1037,7 +1056,7 @@ export default function Home() {
     setMode("map");
     setTerrainStatus("loading");
     setGenerationRequest(request);
-    setNotice("Generating topography for the selected area…");
+    setNotice(`Generating topography for a ${footprint.boardCols} × ${footprint.boardRows} board mosaic…`);
   }
 
   function returnToNavigator() {
@@ -1054,6 +1073,17 @@ export default function Home() {
     setGenerationRequest({ ...generationRequest, id: Date.now() });
   }
 
+  function updateBoardLayout(axis: "cols" | "rows", value: number) {
+    if (axis === "cols") setBoardCols(value);
+    else setBoardRows(value);
+    setTerrainData(null);
+    setTerrainError("");
+    setGenerationRequest(null);
+    setMode("navigate");
+    setRenderState("Board layout updated · generation paused");
+    setNotice("The footprint now matches the selected board mosaic. Position it and generate again.");
+  }
+
   function exportPng() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -1064,7 +1094,7 @@ export default function Home() {
       }
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = `${fileSafe(placeLabel)}-mbt-style-map.png`;
+      link.download = `${fileSafe(placeLabel)}-${footprint.boardCols}x${footprint.boardRows}-mbt-map.png`;
       link.click();
       URL.revokeObjectURL(link.href);
       setNotice("MBT-style map PNG exported with data attribution.");
@@ -1083,7 +1113,14 @@ export default function Home() {
       hex_meters: HEX_METERS,
       map_rotation_degrees: mapRotation,
       grid_rotation_degrees: rotation,
-      sheet_layout: layout,
+      board_layout: {
+        boards_wide: footprint.boardCols,
+        boards_high: footprint.boardRows,
+        board_count: footprint.boardCount,
+        total_hex_columns: footprint.totalHexColumns,
+        total_hex_rows: footprint.totalHexRows,
+        footprint_meters: { width: footprint.widthMeters, height: footprint.heightMeters },
+      },
       map_finish: treatment,
       visible_layers: enabledLayerNames,
       terrain_classification: terrainCounts,
@@ -1100,7 +1137,7 @@ export default function Home() {
     const blob = new Blob([JSON.stringify(plan, null, 2)], { type: "application/json" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `${fileSafe(placeLabel)}-mbt-style-plan.json`;
+    link.download = `${fileSafe(placeLabel)}-${footprint.boardCols}x${footprint.boardRows}-mbt-plan.json`;
     link.click();
     URL.revokeObjectURL(link.href);
     setNotice("Derived terrain plan exported.");
@@ -1175,6 +1212,16 @@ export default function Home() {
             ) : null}
           </form>
 
+          <fieldset className="layout-picker">
+            <legend>BOARD LAYOUT</legend>
+            <div className="layout-fields">
+              <label><span>Wide</span><select aria-label="Boards wide" value={boardCols} onChange={(event) => updateBoardLayout("cols", Number(event.target.value))}>{[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+              <b aria-hidden="true">×</b>
+              <label><span>High</span><select aria-label="Boards high" value={boardRows} onChange={(event) => updateBoardLayout("rows", Number(event.target.value))}>{[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+            </div>
+            <p className="layout-summary"><strong>{footprint.boardCount} {footprint.boardCount === 1 ? "board" : "boards"}</strong><span>{(footprint.widthMeters / 1000).toFixed(2)} × {(footprint.heightMeters / 1000).toFixed(2)} km · {footprint.totalHexColumns} × {footprint.totalHexRows} hex field</span></p>
+          </fieldset>
+
           {mode === "navigate" ? (
             <>
               <div className="control-group">
@@ -1185,9 +1232,9 @@ export default function Home() {
               <div className="generation-card">
                 <span className="eyebrow">NEXT MAP CENTER</span>
                 <strong>{navCenter.lat.toFixed(5)}, {navCenter.lon.toFixed(5)}</strong>
-                <p>Navigation does not request terrain. The generated board will open at detail {clamp(navZoom, 15, 17)}.</p>
+                <p>{footprint.boardCols} × {footprint.boardRows} boards · {(footprint.widthMeters / 1000).toFixed(2)} × {(footprint.heightMeters / 1000).toFixed(2)} km · output detail {nextOutputZoom}.</p>
                 <button type="button" className="primary-action generate-action" onClick={generateSelectedMap}>
-                  Generate MBT map here <span>→</span>
+                  {footprint.boardCount === 1 ? "Generate MBT board here" : `Generate ${footprint.boardCols} × ${footprint.boardRows} boards here`} <span>→</span>
                 </button>
               </div>
             </>
@@ -1230,17 +1277,6 @@ export default function Home() {
             <div>
               {(["Classic", "Muted", "Contrast"] as MapTreatment[]).map((item) => (
                 <button key={item} type="button" className={treatment === item ? "active" : ""} onClick={() => setTreatment(item)} aria-pressed={treatment === item}>
-                  {item}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset className="layout-picker">
-            <legend>SHEET PLAN</legend>
-            <div>
-              {(Object.keys(LAYOUT_DIMENSIONS) as SheetLayout[]).map((item) => (
-                <button key={item} type="button" className={layout === item ? "active" : ""} onClick={() => setLayout(item)} aria-pressed={layout === item}>
                   {item}
                 </button>
               ))}
@@ -1324,6 +1360,7 @@ export default function Home() {
                   <span>LAT {navCenter.lat.toFixed(5)}</span>
                   <span>LON {navCenter.lon.toFixed(5)}</span>
                   <span>ZOOM {navZoom}</span>
+                  <span>{footprint.boardCols} × {footprint.boardRows} BOARDS</span>
                 </div>
               </div>
 
@@ -1348,8 +1385,10 @@ export default function Home() {
                     />
                   ))}
                 </div>
-                <div className="selection-reticle" style={{ width: selectionSize, height: selectionSize }} aria-hidden="true">
-                  <span>NEXT MAP CENTER</span>
+                <div className="selection-reticle" style={{ width: selectionFootprint.width, height: selectionFootprint.height }} aria-hidden="true">
+                  {Array.from({ length: footprint.boardCols - 1 }, (_, index) => <i key={`col-${index}`} className="reticle-seam is-vertical" style={{ left: `${((index + 1) / footprint.boardCols) * 100}%` }} />)}
+                  {Array.from({ length: footprint.boardRows - 1 }, (_, index) => <i key={`row-${index}`} className="reticle-seam is-horizontal" style={{ top: `${((index + 1) / footprint.boardRows) * 100}%` }} />)}
+                  <span>{footprint.boardCols} × {footprint.boardRows} BOARD FOOTPRINT</span>
                 </div>
                 <div className="navigator-crosshair" aria-hidden="true"><i /><i /></div>
                 <div className="navigator-zoom" aria-label="Navigator zoom controls">
@@ -1365,7 +1404,7 @@ export default function Home() {
               <div className="map-footer navigator-footer">
                 <p><span className="pulse" />Pan, wheel, search, and zoom freely. No terrain request is running.</p>
                 <button type="button" className="primary-action generate-action" onClick={generateSelectedMap}>
-                  Generate MBT map here <span>→</span>
+                  {footprint.boardCount === 1 ? "Generate MBT board here" : `Generate ${footprint.boardCols} × ${footprint.boardRows} boards here`} <span>→</span>
                 </button>
               </div>
             </>
@@ -1379,10 +1418,11 @@ export default function Home() {
                 <div className="toolbar-readout">
                   <span>LAT {center.lat.toFixed(5)}</span>
                   <span>LON {center.lon.toFixed(5)}</span>
+                  <span>{footprint.boardCols} × {footprint.boardRows} BOARDS</span>
                 </div>
               </div>
 
-              <div className="canvas-frame">
+              <div className="canvas-frame map-output-frame" style={{ "--board-aspect": footprint.aspectRatio } as CSSProperties}>
                 <canvas ref={canvasRef} aria-label={`Derived MBT-style terrain map centered on ${placeLabel} with 100-meter hexes`} />
                 <div className="north-arrow" aria-hidden="true"><span>TRUE N</span><b style={{ transform: `rotate(${mapRotation}deg)` }}>↑</b></div>
                 <div className="map-scale" aria-hidden="true"><i /><span>100 m / hex</span></div>
@@ -1413,7 +1453,7 @@ export default function Home() {
           <div><span>MODE</span><strong>Locate</strong><small>terrain generation paused</small></div>
           <div><span>NAVIGATOR ZOOM</span><strong>{navZoom}</strong><small>world to local</small></div>
           <div><span>NEXT CENTER</span><strong>{navCenter.lat.toFixed(3)}</strong><small>{navCenter.lon.toFixed(3)} longitude</small></div>
-          <div><span>OUTPUT DETAIL</span><strong>{clamp(navZoom, 15, 17)}</strong><small>100 m hex renderer</small></div>
+          <div><span>OUTPUT DETAIL</span><strong>{nextOutputZoom}</strong><small>{footprint.boardCols} × {footprint.boardRows} footprint fit</small></div>
           <div><span>GENERATION</span><strong>Manual</strong><small>button press only</small></div>
         </section>
       ) : (
@@ -1421,7 +1461,7 @@ export default function Home() {
           <div><span>HEX SCALE</span><strong>100 m</strong><small>ground distance</small></div>
           <div><span>VISIBLE LAYERS</span><strong>{enabledLayerNames.length}</strong><small>{enabledLayerNames.join(" · ") || "none"}</small></div>
           <div><span>RELIEF</span><strong>{elevationMin !== null && elevationMax !== null ? `${Math.round(elevationMin)}–${Math.round(elevationMax)} m` : "—"}</strong><small>{layerCounts.get("topography") ?? 0} samples · {elevationInterval ? `${elevationInterval} m bands` : "flat"}</small></div>
-          <div><span>SHEET ARRAY</span><strong>{layout}</strong><small>{sheetColumns * sheetRows} export plate{sheetColumns * sheetRows > 1 ? "s" : ""}</small></div>
+          <div><span>BOARD ARRAY</span><strong>{footprint.boardCols} × {footprint.boardRows}</strong><small>{footprint.boardCount} seamless {footprint.boardCount === 1 ? "board" : "boards"}</small></div>
           <div><span>ORIENTATION</span><strong>{mapRotation > 0 ? "+" : ""}{mapRotation}°</strong><small>map rotation · grid {rotation}°</small></div>
         </section>
       )}

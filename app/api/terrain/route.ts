@@ -290,7 +290,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const lat = Number(url.searchParams.get("lat"));
   const lon = Number(url.searchParams.get("lon"));
-  const span = Math.min(6000, Math.max(1000, Number(url.searchParams.get("span")) || 3200));
+  const span = Math.min(12000, Math.max(1000, Number(url.searchParams.get("span")) || 3200));
 
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -85 || lat > 85 || lon < -180 || lon > 180) {
     return Response.json({ error: "Valid latitude and longitude are required." }, { status: 400 });

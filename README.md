@@ -6,7 +6,9 @@
 
 Terrain / 100 classifies a real-world location into a measured 100-meter tactical
 hex map inspired by the terrain vocabulary of GMT's *MBT*. It combines a map
-navigator, elevation sampling, terrain controls, and PNG/JSON export.
+navigator, elevation sampling, terrain controls, and PNG/JSON export. Board
+layouts range from 1 × 1 through 4 × 4, with one continuous footprint and
+visible seams between printable boards.
 
 ## Local development
 
