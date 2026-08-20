@@ -29,12 +29,12 @@ export async function generateMetadata(): Promise<Metadata> {
     metadataBase,
     title: "Terrain / 100 — Real ground, MBT-style maps.",
     description:
-      "Classify a real-world location into a clean, playable 100-meter MBT-style tactical map.",
+      "Classify a real-world location into one clean 100-meter MBT-style board or a seamless multi-board mosaic.",
     openGraph: {
       type: "website",
       url: metadataBase.toString(),
       title: "Terrain / 100",
-      description: "Real ground, classified into playable MBT-style maps.",
+      description: "Real ground, classified into playable single- and multi-board MBT-style maps.",
       images: [
         {
           url: socialImage,
@@ -45,7 +45,7 @@ export async function generateMetadata(): Promise<Metadata> {
     twitter: {
       card: "summary_large_image",
       title: "Terrain / 100",
-      description: "Real ground, classified into playable MBT-style maps.",
+      description: "Real ground, classified into playable single- and multi-board MBT-style maps.",
       images: [socialImage],
     },
   };
